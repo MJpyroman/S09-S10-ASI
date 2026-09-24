@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+
+# Etat runtime du deploiement blue/green : propre a chaque machine,
+# jamais versionne (sinon un `git revert` changerait la couleur active).
+deploy/state/active_color
+nginx/active/*.conf

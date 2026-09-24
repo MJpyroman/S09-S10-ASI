@@ -1,0 +1,6 @@
+# Les fichiers Python sont sous la responsabilité de alexis
+*.py @MJpyroman
+
+# La documentation est sous la responsabilité de louis
+*.md @LouisBertin40
+docs/ @LouisBertin40
