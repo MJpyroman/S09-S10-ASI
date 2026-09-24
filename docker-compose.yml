@@ -1,0 +1,62 @@
+name: s09-bluegreen
+
+x-app-base: &app-base
+  image: ${APP_IMAGE:-s09-devops-app:local}
+  build:
+    context: ./starter-app
+  depends_on:
+    redis:
+      condition: service_healthy
+  networks: [backend]
+  restart: unless-stopped
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/active:/etc/nginx/active:ro
+    networks: [backend]
+    restart: unless-stopped
+
+  app-blue:
+    <<: *app-base
+    profiles: ["blue"]
+    environment:
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: "6379"
+      DEPLOY_COLOR: blue
+      APP_COMMIT_SHA: ${APP_COMMIT_SHA:-dev}
+    ports:
+      - "5001:5000"
+
+  app-green:
+    <<: *app-base
+    profiles: ["green"]
+    environment:
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: "6379"
+      DEPLOY_COLOR: green
+      APP_COMMIT_SHA: ${APP_COMMIT_SHA:-dev}
+    ports:
+      - "5002:5000"
+
+networks:
+  backend:
+
+volumes:
+  redis-data:
