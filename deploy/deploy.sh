@@ -12,7 +12,7 @@
 #      echec  -> detruire la tentative, l'etat de prod reste INCHANGE.
 #
 # Variables d'environnement :
-#   APP_IMAGE       image a deployer          (defaut : s09-devops-app:local)
+#   APP_IMAGE       image a deployer          (defaut : s09-s10-app:local)
 #   APP_COMMIT_SHA  SHA injecte dans /status  (defaut : git rev-parse HEAD)
 #   EXPECTED_SHA    SHA exige par le smoke test (defaut : APP_COMMIT_SHA)
 #   HEALTH_RETRIES  nombre de tentatives      (defaut : 30)
@@ -32,9 +32,8 @@ EXPECTED_SHA="${EXPECTED_SHA:-$APP_COMMIT_SHA}"
 HEALTH_RETRIES="${HEALTH_RETRIES:-30}"
 HEALTH_DELAY="${HEALTH_DELAY:-2}"
 export APP_COMMIT_SHA
-export APP_IMAGE="${APP_IMAGE:-s09-devops-app:local}"
+export APP_IMAGE="${APP_IMAGE:-s09-s10-app:local}"
 
-# Port expose par chaque couleur, utilise pour la tester sans passer par nginx.
 port_of() {
     case "$1" in
         blue)  echo 5001 ;;
@@ -51,8 +50,6 @@ read_active_color() {
     tr -d '[:space:]' < "$STATE_FILE"
 }
 
-# Attend que /health reponde 200. Un 503 (Redis injoignable) fait echouer
-# `curl -f`, donc boucler ici couvre aussi le demarrage lent de Redis.
 wait_for_health() {
     local color="$1" port attempt
     port="$(port_of "$color")"
@@ -68,9 +65,6 @@ wait_for_health() {
     return 1
 }
 
-# Verifie que ce qui tourne est bien la bonne couleur ET le bon commit.
-# Sans le controle du SHA, deux deploiements identiques passeraient ce
-# test sans prouver que le code pousse est celui qui tourne (etape 8).
 smoke_test() {
     local color="$1" port body got_color got_sha
     port="$(port_of "$color")"
@@ -95,8 +89,6 @@ smoke_test() {
     log "smoke test OK : couleur=$got_color commit=$got_sha"
 }
 
-# Bascule du frontal. nginx recharge sa conf sans redemarrer le conteneur,
-# donc sans la moindre coupure de trafic.
 switch_traffic() {
     local color="$1"
     mkdir -p "$(dirname "$NGINX_ACTIVE_FILE")"
@@ -131,7 +123,6 @@ main() {
     log "image          : $APP_IMAGE"
     log "commit attendu : $EXPECTED_SHA"
 
-    # Socle permanent : jamais arrete par une bascule.
     docker compose up -d redis nginx
 
     log "demarrage de app-$target..."
@@ -145,7 +136,6 @@ main() {
         exit 1
     fi
 
-    # Ordre volontaire : on bascule le trafic AVANT d'arreter l'ancienne.
     switch_traffic "$target"
     echo "$target" > "$STATE_FILE"
 
