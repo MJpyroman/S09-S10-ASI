@@ -9,7 +9,7 @@ app = Flask(__name__)
 ALERT_THRESHOLD = 25
 
 SERVICE_NAME = "projet-devops-groupe-demo"
-VERSION = "1.0"
+VERSION = "1.1"
 
 # Couleur du slot blue/green dans lequel ce conteneur tourne (etape 3).
 DEPLOY_COLOR = os.getenv("DEPLOY_COLOR", "local")
