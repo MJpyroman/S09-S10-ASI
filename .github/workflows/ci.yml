@@ -1,0 +1,179 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  # Les PR passent lint + test, mais ni build-and-push ni deploy : on ne
+  # publie pas d'image et on ne deploie pas depuis une branche de travail.
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (flake8)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installer les dependances
+        run: pip install -r starter-app/requirements-dev.txt
+
+      - name: Lint avec flake8
+        run: flake8 .
+
+      # Les erreurs de script se decouvrent ici, pas pendant un deploiement.
+      - name: Lint du script de deploiement (shellcheck)
+        run: shellcheck deploy/deploy.sh
+
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installer les dependances
+        run: pip install -r starter-app/requirements-dev.txt
+
+      - name: Lancer les tests
+        run: pytest starter-app/ -v
+
+  build-and-push:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    needs: test
+    # Condition de declenchement : uniquement un push sur main. Sur une PR
+    # le job est simplement ignore, donc aucune image publiee par PR.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write          # sans ca, le push sur ghcr.io renvoie 403
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Nom d'image en minuscules (ghcr.io l'exige)
+        id: image
+        run: |
+          name="${GITHUB_REPOSITORY,,}"
+          echo "name=ghcr.io/${name}" >> "$GITHUB_OUTPUT"
+          echo "ref=ghcr.io/${name}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build et push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./starter-app
+          push: true
+          # Le tag SHA est immuable : il identifie exactement la version
+          # deployee, contrairement a `latest` qui bouge a chaque push.
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Recapitulatif
+        run: |
+          echo "### Image publiee" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${{ steps.image.outputs.name }}:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${{ steps.image.outputs.name }}:latest\`" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy blue/green
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # `environment` permet d'exiger une approbation humaine (required
+    # reviewers) — ce reglage se fait cote GitHub, pas dans ce YAML.
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      APP_IMAGE: ${{ needs.build-and-push.outputs.image }}
+      APP_COMMIT_SHA: ${{ github.sha }}
+      EXPECTED_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Le runner est ephemere : rien de la CI precedente n'est present,
+      # l'image doit etre recuperee depuis le registry.
+      - name: Recuperer l'image publiee
+        run: docker pull "$APP_IMAGE"
+
+      - name: Deploiement initial (couleur blue)
+        run: ./deploy/deploy.sh
+
+      - name: Deploiement suivant — bascule blue -> green
+        run: ./deploy/deploy.sh
+
+      - name: Verifier que le trafic public suit la bascule
+        run: |
+          color="$(curl -fsS http://127.0.0.1:8080/status | jq -r .deploy_color)"
+          sha="$(curl -fsS http://127.0.0.1:8080/status | jq -r .commit_sha)"
+          echo "nginx sert : couleur=$color commit=$sha"
+          [ "$color" = "green" ] || { echo "bascule non effectuee"; exit 1; }
+          [ "$sha" = "$APP_COMMIT_SHA" ] || { echo "mauvais commit en prod"; exit 1; }
+
+      # Preuve que le garde-fou de l'etape 8 fonctionne : on exige un SHA
+      # qui ne correspond pas au code deploye, le deploiement doit etre
+      # rejete et la couleur active ne doit pas bouger.
+      - name: Rollback automatique — SHA volontairement incorrect
+        run: |
+          set +e
+          EXPECTED_SHA=0000000000000000000000000000000000000000 \
+            HEALTH_RETRIES=5 ./deploy/deploy.sh
+          code=$?
+          set -e
+          [ "$code" -ne 0 ] || { echo "le deploiement aurait du echouer"; exit 1; }
+          echo "deploy.sh a bien echoue (code $code)"
+          state="$(cat deploy/state/active_color)"
+          served="$(curl -fsS http://127.0.0.1:8080/status | jq -r .deploy_color)"
+          echo "etat=$state  servi par nginx=$served"
+          [ "$state" = "green" ] && [ "$served" = "green" ] \
+            || { echo "le trafic a bouge malgre l'echec"; exit 1; }
+          echo "OK : couleur active strictement inchangee apres echec"
+
+      - name: Resume du deploiement
+        if: always()
+        run: |
+          {
+            echo "### Deploiement blue/green"
+            echo "- image : \`$APP_IMAGE\`"
+            echo "- couleur active : \`$(cat deploy/state/active_color 2>/dev/null || echo inconnue)\`"
+            echo '```'
+            docker compose ps
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Nettoyage
+        if: always()
+        run: docker compose --profile blue --profile green down -v
