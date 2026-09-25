@@ -65,3 +65,24 @@ def test_status_exposes_color_and_commit_sha(monkeypatch, client):
     payload = client.get("/status").get_json()
     assert payload["deploy_color"] == "green"
     assert payload["commit_sha"] == "abc123"
+
+
+def test_simulate_error_returns_500(client):
+    """L'endpoint qui alimentera l'alerte de l'etape 7."""
+    response = client.get("/simulate-error")
+    assert response.status_code == 500
+
+
+def test_metrics_exposes_counter_and_histogram(monkeypatch, client):
+    use_redis(monkeypatch, up=True)
+    client.get("/status")
+    body = client.get("/metrics").get_data(as_text=True)
+    assert "http_requests_total" in body
+    assert "http_request_duration_seconds_bucket" in body
+
+
+def test_metrics_does_not_count_itself(client):
+    """Sans la garde sur /metrics, chaque scrape fausserait le compteur."""
+    client.get("/metrics")
+    body = client.get("/metrics").get_data(as_text=True)
+    assert 'endpoint="/metrics"' not in body
