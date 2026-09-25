@@ -1,0 +1,15 @@
+apiVersion: 1
+
+# Les dashboards sont charges depuis des fichiers JSON montes en volume,
+# pas crees a la main dans l'interface : sinon ils disparaissent au
+# prochain `docker compose down -v`.
+providers:
+  - name: fichiers
+    orgId: 1
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
