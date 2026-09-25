@@ -1,0 +1,14 @@
+apiVersion: 1
+
+# Datasource provisionnee au demarrage : une datasource ajoutee a la main
+# dans l'interface ne survivrait pas a un `docker compose down -v`.
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    # Nom du service compose, pas localhost : depuis le conteneur Grafana,
+    # localhost designerait Grafana.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
