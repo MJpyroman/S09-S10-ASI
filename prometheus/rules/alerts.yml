@@ -1,3 +1,17 @@
-# Regles d'alerte, deja referencees par prometheus.yml.
-# La regle de taux d'erreur arrive a l'etape 7.
-groups: []
+groups:
+  - name: application
+    rules:
+      # `for: 30s` evite qu'un pic isole et bref ne declenche l'alerte :
+      # sans lui, elle clignoterait au moindre soubresaut de trafic.
+      - alert: TauxErreurEleve
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[1m]))
+            /
+          sum(rate(http_requests_total[1m]))
+            > 0.05
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Taux d'erreur superieur a 5%"
+          description: "{{ $value | humanizePercentage }} des requetes repondent en 5xx depuis plus de 30s."
