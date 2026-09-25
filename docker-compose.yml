@@ -1,7 +1,7 @@
 name: s09-bluegreen
 
 x-app-base: &app-base
-  image: ${APP_IMAGE:-s09-devops-app:local}
+  image: ${APP_IMAGE:-s09-s10-app:local}
   build:
     context: ./starter-app
   depends_on:
@@ -55,8 +55,49 @@ services:
     ports:
       - "5002:5000"
 
+  # --- Observabilite (seance 5) -------------------------------------------
+  # Comme redis et nginx : pas de `profiles`, ils tournent quelle que soit
+  # la couleur active.
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    # --web.enable-lifecycle autorise `curl -X POST .../-/reload` : on
+    # recharge une regle d'alerte sans redemarrer le conteneur.
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    networks: [backend]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    ports:
+      - "3000:3000"
+    environment:
+      # Pas de mot de passe en dur : variable avec valeur par defaut.
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks: [backend]
+    restart: unless-stopped
+
 networks:
   backend:
 
 volumes:
   redis-data:
+  prometheus-data:
+  grafana-data:

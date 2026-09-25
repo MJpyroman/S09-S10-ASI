@@ -1,0 +1,3 @@
+# Regles d'alerte, deja referencees par prometheus.yml.
+# La regle de taux d'erreur arrive a l'etape 7.
+groups: []
